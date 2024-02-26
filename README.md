@@ -1,48 +1,60 @@
-# transfers-indexer
+# Transfers Indexer
 
-This tool allows everyone to save the transfers of MAS made from an EOA forever using the Massa API and a MySQL database.
+The Transfers Indexer is a powerful tool designed for archiving MAS token transfers from Externally Owned Accounts (EOA) on the Massa blockchain. It utilizes the API exposed by the [Massa node](https://github.com/massalabs/massa) for data collection and stores this information in a MySQL database.
 
-## Setup
+## Prerequisites
 
-### Database
+- **Massa Node with Execution Trace**: You must have access to a Massa node compiled with the `execution-trace` feature or run the source code with `cargo run -r --features execution-trace`.
+- **MySQL Database**: A MySQL server is necessary for data storage. If you do not have MySQL installed, you can deploy a containerized version using the provided Docker Compose file with the command `docker-compose up -d`.
 
-You need to have a MySQL backend running to use this program. You can either use your own or, if you don't have one, we added a `docker-compose.yml` that run a MySQL in this repository.
+## Setup Instructions
 
-When you have your database backend running make sure to configure the `.env` file at the root of this repository to match the credentials, host, etc... for your database.
+To start the indexer, execute:
 
-### Massa node
-
-You need to have a massa-node connected to this project in order to gather the transfers from the network.
-This node needs to be launched using the feature `execution-trace`. The command to launch the node with the feature is : 
-```
-cargo run -r --features execution-trace
-``` 
-Make sure that the IP and port to the public API of your massa-node are matching in the `.env`
-
-## Launch the transfers indexer
-
-When everything is setup and your `.env` is updated you can launch the project using : 
-```
+```sh
 cargo run -r
 ```
 
-It will populate your database with all the transfers from the node and you will be able to access to the API.
+This command launches the indexing process, capturing and storing transfer data from the Massa blockchain.
 
-If you stop your node, this program will be in error and so you need to restart it after your node is running again
+## API Documentation
 
-## API documentation
+For a detailed overview of the API endpoints, including query parameters, request examples, and response structures, please refer to our [Swagger API documentation](transfers-indexer.yml).
 
-- `/transfers/?from=address` Fetching all the transfers from a specified address. Example : `http://localhost:4444/transfers?from=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
 
-- `/transfers?to=address` Fetching all the transfers to a specified address. Example : `http://localhost:4444/transfers?to=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
+## FAQ
 
-- `/transfers/?operation_id=op_id` Fetching all the transfers made in an operation. Example : `http://localhost:4444/transfers?operation_id=O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM`
+### Using a Remote Massa Node
 
-- `/transfers?start_date=date&end_date=date` Fetching all the transfers between two dates. Example : `http://localhost:4444/transfers?start_date=2024-02-20T02:00:00Z&end_date=2024-02-21T00:00:00Z`
+To configure the indexer to connect to a remote Massa node, update the `.env` file with the remote node's IP and public port:
 
-You can combine them all `http://localhost:4444/transfers?to=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv&from=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv&operation_id=O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM&start_date=2024-02-20T02:00:00Z&end_date=2024-02-21T00:00:00Z`
-
-Example answer : 
-```json
-[{"from":"AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx","to":"AU1iUsXqfqAfhBw7Bc4yMm2nw3AzLdo9f6bsMTm7no3UZpzBvuNR","amount":"0.000000001","context":{"operation_id":"O12Bve9WYNApCDCcJFGy4giJSNTzhEBVoTtyxDFWxMFYF1iJYYbd"}},{"from":"AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx","to":"AU12FoGv3tAQ7pbMVZFL5TRnVwmSGDYcb69vGbG8s9cppSFVAER6n","amount":"0.000000001","context":{"operation_id":"O12uZnkLMsmeiCJpgkP6agX5VYTvsNp7xdNLs3ew5Wrp6ytfiPdZ"}}]
+```toml
+MASSA_NODE_API_IP="remote_node_ip"
+MASSA_NODE_API_PUBLIC_PORT="remote_node_port"
 ```
+
+### Configuring the API Listener
+
+To change the network interface or port the API listens to, modify the `INDEXER_API` value in the `.env` file:
+
+```toml
+INDEXER_API="desired_ip:desired_port"
+```
+
+### Using a Remote MySQL Database
+
+If you prefer using a remote MySQL database instead of a local or Docker-based instance, specify the database URL in the `.env` file:
+
+```toml
+DATABASE_URL='mysql://user:password@remote_host:3306/massa_transfers'
+```
+
+### Changing Database Credentials
+
+To change the database credentials, adjust the `DATABASE_URL` in the `.env` file to reflect the new user and password:
+
+```toml
+DATABASE_URL='mysql://new_user:new_password@localhost:3306/massa_transfers'
+```
+
+This configuration allows the indexer to connect to the specified MySQL database using the provided credentials.
