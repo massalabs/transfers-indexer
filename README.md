@@ -32,8 +32,17 @@ If you stop your node, this program will be in error and so you need to restart 
 
 ## API documentation
 
-- `/transfers/from/:address` Fetching all the transfers from a specified address. Example : `http://localhost:4444/transfers/from/AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
+- `/transfers/?from=address` Fetching all the transfers from a specified address. Example : `http://localhost:4444/transfers?from=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
 
-- `/transfers/to/:address` Fetching all the transfers to a specified address. Example : `http://localhost:4444/transfers/to/AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
+- `/transfers?to=address` Fetching all the transfers to a specified address. Example : `http://localhost:4444/transfers?to=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv`
 
-- `/transfers/time_period/:start_date/:end_date` Fetching all the transfers between two dates. Example : `http://localhost:4444/transfers/time_period/2024-02-20T02:00:00Z/2024-02-21T00:00:00Z`
+- `/transfers/?operation_id=op_id` Fetching all the transfers made in an operation. Example : `http://localhost:4444/transfers?operation_id=O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM`
+
+- `/transfers?start_date=date&end_date=date` Fetching all the transfers between two dates. Example : `http://localhost:4444/transfers?start_date=2024-02-20T02:00:00Z&end_date=2024-02-21T00:00:00Z`
+
+You can combine them all `http://localhost:4444/transfers?to=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv&from=AU12QxhhkrkGxewQ7vqkggsj81uchT1r3Qq1Hvn21rUXFQ94h1Nnv&operation_id=O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM&start_date=2024-02-20T02:00:00Z&end_date=2024-02-21T00:00:00Z`
+
+Example answer : 
+```json
+[{"from":"AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx","to":"AU1iUsXqfqAfhBw7Bc4yMm2nw3AzLdo9f6bsMTm7no3UZpzBvuNR","amount":"0.000000001","context":{"operation_id":"O12Bve9WYNApCDCcJFGy4giJSNTzhEBVoTtyxDFWxMFYF1iJYYbd"}},{"from":"AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx","to":"AU12FoGv3tAQ7pbMVZFL5TRnVwmSGDYcb69vGbG8s9cppSFVAER6n","amount":"0.000000001","context":{"operation_id":"O12uZnkLMsmeiCJpgkP6agX5VYTvsNp7xdNLs3ew5Wrp6ytfiPdZ"}}]
+```

@@ -8,10 +8,11 @@ use hyper::body::Bytes;
 use hyper::Request;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
-use massa_api_exports::execution::Transfer;
+use massa_api_exports::execution::{Transfer, TransferContext};
 use massa_models::address::Address;
 use massa_models::amount::Amount;
 use massa_models::slot::Slot;
+use massa_models::timeslots::get_block_slot_timestamp;
 use massa_sdk::{Client, ClientConfig, HttpConfig};
 use massa_time::MassaTime;
 use mysql::prelude::Queryable;
@@ -53,11 +54,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         conn.query_drop(
             "CREATE TABLE IF NOT EXISTS transfers (
             id INT PRIMARY KEY NOT NULL AUTO_INCREMENT,
+            slot_timestamp datetime not null,
             slot varchar(100) not null,
             from_addr varchar(100) not null,
             to_addr varchar(100) not null,
             amount bigint not null,
-            context text not null
+            context text not null,
+            operation_id varchar(100)
         )",
         )
         .unwrap();
@@ -109,14 +112,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .await
                 .unwrap();
             for (currents, slot) in slots_transfers.iter().zip(slots.iter()) {
+                let slot_timestamp = get_block_slot_timestamp(
+                    get_status.config.thread_count,
+                    get_status.config.t0,
+                    get_status.config.genesis_timestamp,
+                    *slot
+                ).unwrap();
                 for transfer in currents.iter() {
-                    conn.exec_drop("INSERT INTO transfers (slot, from_addr, to_addr, amount, context) VALUES (?, ?, ?, ?, ?)", (
-                        format!("{}_{}", slot.period, slot.thread),
-                        transfer.from.to_string(),
-                        transfer.to.to_string(),
-                        transfer.amount.to_raw(),
-                        serde_json::to_string(&transfer.context).unwrap()
-                    )).unwrap();
+                    match transfer.context {
+                        TransferContext::Operation(operation_id) => {
+                            conn.exec_drop(
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    format!("{}_{}", slot.period, slot.thread),
+                                    slot_timestamp.format_instant().trim_end_matches('Z'),
+                                    transfer.from.to_string(),
+                                    transfer.to.to_string(),
+                                    transfer.amount.to_raw(),
+                                    serde_json::to_string(&transfer.context).unwrap(),
+                                    operation_id.to_string(),
+                                )
+                            ).unwrap();
+                        }
+                        TransferContext::ASC(_index) => {
+                            conn.exec_drop(
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, context) VALUES (?, ?, ?, ?, ?, ?)",
+                                (
+                                    format!("{}_{}", slot.period, slot.thread),
+                                    slot_timestamp.format_instant().trim_end_matches('Z'),
+                                    transfer.from.to_string(),
+                                    transfer.to.to_string(),
+                                    transfer.amount.to_raw(),
+                                    serde_json::to_string(&transfer.context).unwrap()
+                                )
+                            ).unwrap();
+                        }
+                    }
                 }
                 last_saved_slot = *slot;
                 conn.exec_drop(
@@ -165,33 +196,56 @@ async fn transfers(
 
     let mut conn = pool.get_conn().unwrap();
     let params =
-        form_urlencoded::parse(&req.uri().query().unwrap().as_bytes()).collect::<HashMap<_, _>>();
-    let slot = params.get("slot");
-    let Some(slot) = slot else {
-        return Response::builder()
-            .status(400)
-            .body(Full::new(Bytes::from("Slot not found")));
-    };
-    let slot = slot.split('_').collect::<Vec<&str>>();
-    if slot.len() != 2 {
-        return Response::builder()
-            .status(400)
-            .body(Full::new(Bytes::from("Invalid slot")));
+        form_urlencoded::parse(&req.uri().query().unwrap_or_default().as_bytes()).collect::<HashMap<_, _>>();
+
+    let mut conditions = vec![];
+    match params.get("from") {
+        Some(from) => {
+            let Ok(from_addr) = Address::from_str(from) else {
+                return Response::builder()
+                    .status(400)
+                    .body(Full::new(Bytes::from("Invalid from address")));
+            };
+            conditions.push(format!("from_addr = '{}' ", from_addr.to_string()));
+        }
+        None => {}
     }
-    let Ok(period) = slot[0].parse::<u64>() else {
-        return Response::builder()
-            .status(400)
-            .body(Full::new(Bytes::from("Invalid period")));
-    };
-    let Ok(thread) = slot[1].parse::<u8>() else {
-        return Response::builder()
-            .status(400)
-            .body(Full::new(Bytes::from("Invalid thread")));
-    };
-    let slot = Slot::new(period, thread);
+
+    match params.get("to") {
+        Some(to) => {
+            let Ok(to_addr) = Address::from_str(to) else {
+                return Response::builder()
+                    .status(400)
+                    .body(Full::new(Bytes::from("Invalid to address")));
+            };
+            conditions.push(format!("to_addr = '{}' ", to_addr.to_string()));
+        }
+        None => {}
+    }
+    match params.get("operation_id") {
+        Some(operation_id) => {
+            conditions.push(format!("operation_id = '{}' ", operation_id));
+        }
+        None => {}
+    }
+    match params.get("start_date") {
+        Some(start_date) => {
+            conditions.push(format!("slot_timestamp >= '{}' ", start_date.trim_end_matches('Z')));
+        }
+        None => {}
+    }
+    match params.get("end_date") {
+        Some(end_date) => {
+            conditions.push(format!("slot_timestamp <= '{}' ", end_date.trim_end_matches('Z')));
+        }
+        None => {}
+    }
+    if conditions.is_empty() {
+        conditions.push("1 = 1".to_string());
+    }
     let Ok(res) = conn.exec::<(String, String, u64, String), _, _>(
-        "SELECT from_addr, to_addr, amount, context FROM transfers WHERE slot = ?",
-        (format!("{}_{}", slot.period, slot.thread),),
+        format!("SELECT from_addr, to_addr, amount, context FROM transfers WHERE {}", conditions.join(" AND ")),
+        (),
     ) else {
         return Response::builder()
             .status(500)
