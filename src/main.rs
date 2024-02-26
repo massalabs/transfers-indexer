@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .await
         .unwrap();
-        let url = "mysql://user:password@localhost:3307/db";
+        let url = "mysql://user:password@localhost:3307/massa_transfers";
         let pool = Pool::new(url).unwrap();
 
         let mut conn = pool.get_conn().unwrap();
@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn transfers(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, hyper::http::Error> {
-    let url = "mysql://user:password@localhost:3307/db";
+    let url = "mysql://user:password@localhost:3307/massa_transfers";
     let pool = Pool::new(url).unwrap();
 
     let mut conn = pool.get_conn().unwrap();
