@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-massa_sdk = { git = "https://github.com/massalabs/massa", rev = "aec5115b4285e3b15cce946106e1816bda7b6dc1", package = "massa_sdk" }
-massa_models = { git = "https://github.com/massalabs/massa", rev = "aec5115b4285e3b15cce946106e1816bda7b6dc1", package = "massa_models" }
-massa_time = { git = "https://github.com/massalabs/massa", rev = "aec5115b4285e3b15cce946106e1816bda7b6dc1", package = "massa_time" }
-massa_api_exports = { git = "https://github.com/massalabs/massa", rev = "aec5115b4285e3b15cce946106e1816bda7b6dc1", package = "massa_api_exports" }
+massa_sdk = { git = "https://github.com/massalabs/massa", rev = "d1b371cbf426731aec89f73220bd6f6dcaa0d6d8", package = "massa_sdk" }
+massa_models = { git = "https://github.com/massalabs/massa", rev = "d1b371cbf426731aec89f73220bd6f6dcaa0d6d8", package = "massa_models" }
+massa_time = { git = "https://github.com/massalabs/massa", rev = "d1b371cbf426731aec89f73220bd6f6dcaa0d6d8", package = "massa_time" }
+massa_api_exports = { git = "https://github.com/massalabs/massa", rev = "d1b371cbf426731aec89f73220bd6f6dcaa0d6d8", package = "massa_api_exports" }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
