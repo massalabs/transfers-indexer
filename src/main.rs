@@ -17,9 +17,11 @@ use massa_time::MassaTime;
 use mysql::prelude::Queryable;
 use mysql::Pool;
 use tokio::net::TcpListener;
+use dotenv::dotenv;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    dotenv().ok();
     tokio::spawn(async move {
         let config = HttpConfig {
             client_config: ClientConfig {
@@ -34,18 +36,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             enabled: true,
         };
         let client = Client::new(
-            "127.0.0.1".parse().unwrap(),
-            33035,
+            std::env::var("MASSA_NODE_API_IP").unwrap().parse().unwrap(),
+            std::env::var("MASSA_NODE_API_PUBLIC_PORT").unwrap().parse().unwrap(),
             33036,
             33037,
             33038,
-            77,
+            77658377,
             &config,
         )
         .await
         .unwrap();
-        let url = "mysql://user:password@localhost:3307/massa_transfers";
-        let pool = Pool::new(url).unwrap();
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let pool = Pool::new(url.as_str()).unwrap();
 
         let mut conn = pool.get_conn().unwrap();
         conn.query_drop(
@@ -128,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 4444));
+    let addr = std::env::var("INDEXER_API").unwrap().parse::<SocketAddr>().unwrap();
 
     // We create a TcpListener and bind it to 127.0.0.1:4444
     let listener = TcpListener::bind(addr).await?;
@@ -158,8 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn transfers(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, hyper::http::Error> {
-    let url = "mysql://user:password@localhost:3307/massa_transfers";
-    let pool = Pool::new(url).unwrap();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = Pool::new(url.as_str()).unwrap();
 
     let mut conn = pool.get_conn().unwrap();
     let params =
