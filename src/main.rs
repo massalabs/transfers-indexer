@@ -105,6 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             while range_end != last_inserted_slot {
                 last_inserted_slot = last_inserted_slot.get_next_slot(32).unwrap();
                 slots.push(last_inserted_slot);
+                if slots.len() == 20 {
+                    break;
+                }
             }
             let slots_transfers = client
                 .public
