@@ -123,6 +123,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .get_slots_transfers(slots.clone())
                 .await
                 .unwrap();
+            if slots_transfers.is_empty() && !slots.is_empty() {
+                last_saved_slot = slots.last().unwrap().clone();
+                conn.exec_drop(
+                    "UPDATE metadata SET value_text = ? WHERE key_text = 'last_slot'",
+                    (format!("{}_{}", last_saved_slot.period, last_saved_slot.thread),),
+                )
+                .unwrap();
+                continue;
+            }
             for (currents, slot) in slots_transfers.iter().zip(slots.iter()) {
                 let slot_timestamp = get_block_slot_timestamp(
                     get_status.config.thread_count,
@@ -158,10 +167,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     slot_timestamp.format_instant().trim_end_matches('Z'),
                                     transfer.from.to_string(),
                                     transfer.to.to_string(),
-                                    transfer.amount.to_raw(),
                                     transfer.block_id.to_string(),
                                     transfer.fee.to_raw(),
                                     transfer.succeed,
+                                    transfer.amount.to_raw(),
                                     serde_json::to_string(&transfer.context).unwrap()
                                 )
                             ).unwrap();
