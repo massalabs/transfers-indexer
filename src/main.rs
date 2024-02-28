@@ -3,22 +3,25 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use dotenv::dotenv;
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::Request;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
-use massa_api_exports::execution::{Transfer, TransferContext};
+use massa_api_exports::execution::TransferContext;
 use massa_models::address::Address;
 use massa_models::amount::Amount;
+use massa_models::block_id::BlockId;
 use massa_models::slot::Slot;
 use massa_models::timeslots::get_block_slot_timestamp;
 use massa_sdk::{Client, ClientConfig, HttpConfig};
 use massa_time::MassaTime;
 use mysql::prelude::Queryable;
 use mysql::Pool;
+use serde::{Deserialize, Serialize};
+use time::{format_description, PrimitiveDateTime};
 use tokio::net::TcpListener;
-use dotenv::dotenv;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -38,7 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         let client = Client::new(
             std::env::var("MASSA_NODE_API_IP").unwrap().parse().unwrap(),
-            std::env::var("MASSA_NODE_API_PUBLIC_PORT").unwrap().parse().unwrap(),
+            std::env::var("MASSA_NODE_API_PUBLIC_PORT")
+                .unwrap()
+                .parse()
+                .unwrap(),
             33036,
             33037,
             33038,
@@ -59,7 +65,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             from_addr varchar(100) not null,
             to_addr varchar(100) not null,
             amount bigint not null,
-            context text not null,
+            block_id varchar(100) not null,
+            fee bigint not null,
+            succeed int not null,
+            context text not null,            
             operation_id varchar(100)
         )",
         )
@@ -119,19 +128,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     get_status.config.thread_count,
                     get_status.config.t0,
                     get_status.config.genesis_timestamp,
-                    *slot
-                ).unwrap();
+                    *slot,
+                )
+                .unwrap();
                 for transfer in currents.iter() {
                     match transfer.context {
                         TransferContext::Operation(operation_id) => {
                             conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, block_id, fee, succeed, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     format!("{}_{}", slot.period, slot.thread),
                                     slot_timestamp.format_instant().trim_end_matches('Z'),
                                     transfer.from.to_string(),
                                     transfer.to.to_string(),
                                     transfer.amount.to_raw(),
+                                    transfer.block_id.to_string(),
+                                    transfer.fee.to_raw(),
+                                    transfer.succeed,
                                     serde_json::to_string(&transfer.context).unwrap(),
                                     operation_id.to_string(),
                                 )
@@ -139,13 +152,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                         TransferContext::ASC(_index) => {
                             conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, context) VALUES (?, ?, ?, ?, ?, ?)",
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     format!("{}_{}", slot.period, slot.thread),
                                     slot_timestamp.format_instant().trim_end_matches('Z'),
                                     transfer.from.to_string(),
                                     transfer.to.to_string(),
                                     transfer.amount.to_raw(),
+                                    transfer.block_id.to_string(),
+                                    transfer.fee.to_raw(),
+                                    transfer.succeed,
                                     serde_json::to_string(&transfer.context).unwrap()
                                 )
                             ).unwrap();
@@ -164,7 +180,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    let addr = std::env::var("INDEXER_API").unwrap().parse::<SocketAddr>().unwrap();
+    let addr = std::env::var("INDEXER_API")
+        .unwrap()
+        .parse::<SocketAddr>()
+        .unwrap();
 
     // We create a TcpListener and bind it to 127.0.0.1:4444
     let listener = TcpListener::bind(addr).await?;
@@ -198,8 +217,8 @@ async fn transfers(
     let pool = Pool::new(url.as_str()).unwrap();
 
     let mut conn = pool.get_conn().unwrap();
-    let params =
-        form_urlencoded::parse(&req.uri().query().unwrap_or_default().as_bytes()).collect::<HashMap<_, _>>();
+    let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
+        .collect::<HashMap<_, _>>();
 
     let mut conditions = vec![];
     match params.get("from") {
@@ -209,7 +228,7 @@ async fn transfers(
                     .status(400)
                     .body(Full::new(Bytes::from("Invalid from address")));
             };
-            conditions.push(format!("from_addr = '{}' ", from_addr.to_string()));
+            conditions.push(format!("from_addr = '{}' ", from_addr));
         }
         None => {}
     }
@@ -221,7 +240,7 @@ async fn transfers(
                     .status(400)
                     .body(Full::new(Bytes::from("Invalid to address")));
             };
-            conditions.push(format!("to_addr = '{}' ", to_addr.to_string()));
+            conditions.push(format!("to_addr = '{}' ", to_addr));
         }
         None => {}
     }
@@ -233,21 +252,27 @@ async fn transfers(
     }
     match params.get("start_date") {
         Some(start_date) => {
-            conditions.push(format!("slot_timestamp >= '{}' ", start_date.trim_end_matches('Z')));
+            conditions.push(format!(
+                "slot_timestamp >= '{}' ",
+                start_date.trim_end_matches('Z')
+            ));
         }
         None => {}
     }
     match params.get("end_date") {
         Some(end_date) => {
-            conditions.push(format!("slot_timestamp <= '{}' ", end_date.trim_end_matches('Z')));
+            conditions.push(format!(
+                "slot_timestamp <= '{}' ",
+                end_date.trim_end_matches('Z')
+            ));
         }
         None => {}
     }
     if conditions.is_empty() {
         conditions.push("1 = 1".to_string());
     }
-    let Ok(res) = conn.exec::<(String, String, u64, String), _, _>(
-        format!("SELECT from_addr, to_addr, amount, context FROM transfers WHERE {}", conditions.join(" AND ")),
+    let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, String, PrimitiveDateTime ), _, _>(
+        format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
         (),
     ) else {
         return Response::builder()
@@ -256,14 +281,41 @@ async fn transfers(
     };
     let mut transfers = Vec::new();
     for transfer in res {
-        transfers.push(Transfer {
+        transfers.push(TransferResponse {
             from: Address::from_str(&transfer.0).unwrap(),
             to: Address::from_str(&transfer.1).unwrap(),
-            amount: Amount::from_raw(transfer.2),
-            context: serde_json::from_str(&transfer.3).unwrap(),
+            block_id: BlockId::from_str(&transfer.2).unwrap(),
+            fee: Amount::from_raw(transfer.3),
+            succeed: transfer.4,
+            amount: Amount::from_raw(transfer.5),
+            context: serde_json::from_str(&transfer.6).unwrap(),
+            operation_time: transfer
+                .7
+                .format(&format_description::well_known::Iso8601::DATE_TIME)
+                .unwrap(),
         });
     }
     Ok(Response::new(Full::new(Bytes::from(
         serde_json::to_string(&transfers).unwrap(),
     ))))
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct TransferResponse {
+    /// The sender of the transfer
+    pub from: Address,
+    /// The receiver of the transfer
+    pub to: Address,
+    /// The amount of the transfer
+    pub amount: Amount,
+    /// If the transfer succeed or not
+    pub succeed: bool,
+    /// Fee
+    pub fee: Amount,
+    /// Block ID
+    pub block_id: BlockId,
+    /// operation time
+    pub operation_time: String,
+    /// Context
+    pub context: TransferContext,
 }
