@@ -26,6 +26,11 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     dotenv().ok();
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_panic(info);
+        std::process::exit(1);
+    }));
     tokio::spawn(async move {
         let config = HttpConfig {
             client_config: ClientConfig {
@@ -68,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             block_id varchar(100) not null,
             fee bigint not null,
             succeed int not null,
-            context text not null,            
+            context text not null,
             operation_id varchar(100)
         )",
         )
