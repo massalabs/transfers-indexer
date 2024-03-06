@@ -45,6 +45,13 @@ paths:
           schema:
             type: string
           example: O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM
+        - name: succeed
+          in: query
+          description: Fetching all the transfers that succeeded
+          required: false
+          schema:
+            type: string
+          example: true
         - name: start_date
           in: query
           description: Start date for fetching transfers within a specific date range.
