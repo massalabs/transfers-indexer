@@ -232,8 +232,6 @@ async fn indexer_api(
 
     let mut conn = pool.get_conn().unwrap();
 
-    println!("{:?}", req.uri().path());
-
     match req.uri().path() {
         "/transfers" => {
             let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
