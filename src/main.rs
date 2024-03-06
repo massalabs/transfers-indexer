@@ -269,6 +269,12 @@ async fn indexer_api(
             }
             None => {}
         }
+        match params.get("succeed") {
+            Some(succeed) => {
+                conditions.push(format!("succeed = '{}' ", succeed));
+            }
+            None => {}
+        }
         match params.get("start_date") {
             Some(start_date) => {
                 conditions.push(format!(
