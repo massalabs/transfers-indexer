@@ -6,6 +6,19 @@ info:
 servers:
   - url: http://localhost:4444/
 paths:
+  /last_slot:
+    get:
+      summary: Get the last slot written to DB
+      description: Get the last slot written to DB
+      responses:
+        '200':
+          description: The slot
+          content:
+            application/json:
+              examples:
+                example-1:
+                  value:
+                    ["275779_0"]
   /transfers:
     get:
       summary: Fetch transfers
@@ -32,6 +45,13 @@ paths:
           schema:
             type: string
           example: O12K6AwRg7jnDP4XvDazuH3j19KNK1FzuHuN9oNgACdMfhJJH9XM
+        - name: succeed
+          in: query
+          description: Fetching all the transfers that succeeded
+          required: false
+          schema:
+            type: string
+          example: true
         - name: start_date
           in: query
           description: Start date for fetching transfers within a specific date range.
@@ -59,18 +79,18 @@ paths:
                     - from: "AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx"
                       to: "AU1iUsXqfqAfhBw7Bc4yMm2nw3AzLdo9f6bsMTm7no3UZpzBvuNR"
                       amount: "0.000000001"
-                      succeed: false,
-                      fee: "0.000000001",
-                      block_id: "B1c5HYaFtVozAu2mKhr1XrVcvse5Ffwt2feew6RmPoHkWgc1BGx",
-                      operation_time: "2024-02-28T12:49:38.000000000",
+                      succeed: false
+                      fee: "0.000000001"
+                      block_id: "B1c5HYaFtVozAu2mKhr1XrVcvse5Ffwt2feew6RmPoHkWgc1BGx"
+                      operation_time: "2024-02-28T12:49:38.000000000"
                       context: 
                         operation_id: "O12Bve9WYNApCDCcJFGy4giJSNTzhEBVoTtyxDFWxMFYF1iJYYbd"
                     - from: "AU1Fp7uBP2TXxDty2HdTE3ZE3XQ4cNXnG3xuo8TkQLJtyxC7FKhx"
                       to: "AU12FoGv3tAQ7pbMVZFL5TRnVwmSGDYcb69vGbG8s9cppSFVAER6n"
                       amount: "0.000000001"
                       succeed: false,
-                      fee: "0.000000001",
-                      block_id: "B1c5HYaFtVozAu2mKhr1XrVcvse5Ffwt2feew6RmPoHkWgc1BGx",
-                      operation_time: "2024-02-28T12:49:38.000000000",
+                      fee: "0.000000001"
+                      block_id: "B1c5HYaFtVozAu2mKhr1XrVcvse5Ffwt2feew6RmPoHkWgc1BGx"
+                      operation_time: "2024-02-28T12:49:38.000000000"
                       context: 
                         operation_id: "O12uZnkLMsmeiCJpgkP6agX5VYTvsNp7xdNLs3ew5Wrp6ytfiPdZ"
