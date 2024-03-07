@@ -50,6 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(1);
     }));
 
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = Pool::new(url.as_str()).unwrap();
+    let mut conn = pool.get_conn().unwrap();
+
     tokio::spawn(async move {
         let config = HttpConfig {
             client_config: ClientConfig {
@@ -77,10 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .await
         .unwrap();
-        let url = std::env::var("DATABASE_URL").unwrap();
-        let pool = Pool::new(url.as_str()).unwrap();
 
-        let mut conn = pool.get_conn().unwrap();
+        let _ = conn.query_drop(
+            "CREATE INDEX idx_slot_timestamp ON transfers(slot_timestamp);
+            CREATE INDEX idx_from_addr ON transfers(from_addr);
+            CREATE INDEX idx_to_addr ON transfers(to_addr);
+            CREATE INDEX idx_block_id ON transfers(block_id);
+            CREATE INDEX idx_operation_id ON transfers(operation_id);"
+        );
+
         conn.query_drop(
             "CREATE TABLE IF NOT EXISTS transfers (
             id INT PRIMARY KEY NOT NULL AUTO_INCREMENT,
@@ -151,7 +160,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 last_saved_slot = slots.last().unwrap().clone();
                 conn.exec_drop(
                     "UPDATE metadata SET value_text = ? WHERE key_text = 'last_slot'",
-                    (format!("{}_{}", last_saved_slot.period, last_saved_slot.thread),),
+                    (format!(
+                        "{}_{}",
+                        last_saved_slot.period, last_saved_slot.thread
+                    ),),
                 )
                 .unwrap();
                 continue;
@@ -231,13 +243,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Use an adapter to access something implementing `tokio::io` traits as if they implement
         // `hyper::rt` IO traits.
         let io = TokioIo::new(stream);
+        let pool = pool.clone();
+        let make_svc = service_fn(move |req| transfers(req, pool.clone()));
 
         // Spawn a tokio task to serve multiple connections concurrently
         tokio::task::spawn(async move {
             // Finally, we bind the incoming connection to our `hello` service
             if let Err(err) = http1::Builder::new()
                 // `service_fn` converts our function in a `Service`
-                .serve_connection(io, service_fn(indexer_api))
+                .serve_connection(io, make_svc)
                 .await
             {
                 println!("Error serving connection: {:?}", err);
@@ -248,10 +262,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 async fn indexer_api(
     req: Request<hyper::body::Incoming>,
+    pool: Pool,
 ) -> Result<Response<Full<Bytes>>, hyper::http::Error> {
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = Pool::new(url.as_str()).unwrap();
-
     let mut conn = pool.get_conn().unwrap();
 
     match req.uri().path() {
