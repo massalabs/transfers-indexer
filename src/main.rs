@@ -20,6 +20,7 @@ use massa_sdk::{Client, ClientConfig, HttpConfig};
 use massa_time::MassaTime;
 use mysql::prelude::Queryable;
 use mysql::Pool;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use time::{format_description, PrimitiveDateTime};
 use tokio::net::TcpListener;
@@ -268,6 +269,11 @@ async fn indexer_api(
 
     match req.uri().path() {
         "/transfers" => {
+            if req.method() != hyper::Method::GET {
+                return Response::builder()
+                    .status(405)
+                    .body(Full::new(Bytes::from("Method not allowed")));
+            }
             let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
             .collect::<HashMap<_, _>>();
     
@@ -336,9 +342,8 @@ async fn indexer_api(
                 .status(500)
                 .body(Full::new(Bytes::from("Internal error")));
         };
-        let mut transfers = Vec::new();
-        for transfer in res {
-            transfers.push(TransferResponse {
+        let transfers = res.into_par_iter().map(|transfer| {
+            TransferResponse {
                 from: Address::from_str(&transfer.0).unwrap(),
                 to: Address::from_str(&transfer.1).unwrap(),
                 block_id: BlockId::from_str(&transfer.2).unwrap(),
@@ -350,8 +355,8 @@ async fn indexer_api(
                     .7
                     .format(&format_description::well_known::Iso8601::DATE_TIME)
                     .unwrap(),
-            });
-        }
+            }
+        }).collect::<Vec<TransferResponse>>();
         Ok(Response::new(Full::new(Bytes::from(
             serde_json::to_string(&transfers).unwrap(),
         ))))
