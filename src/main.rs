@@ -6,6 +6,7 @@ use std::time::Duration;
 use dotenv::dotenv;
 use http_body_util::Full;
 use hyper::body::Bytes;
+use hyper::header::CONTENT_TYPE;
 use hyper::Request;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
@@ -22,6 +23,23 @@ use mysql::Pool;
 use serde::{Deserialize, Serialize};
 use time::{format_description, PrimitiveDateTime};
 use tokio::net::TcpListener;
+use prometheus::{register_int_gauge, Encoder, IntGauge, TextEncoder};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref LAST_SLOT_PERIOD: IntGauge =
+        register_int_gauge!("last_slot_period", "period of the slot of the last operation saved in database").unwrap();
+    static ref LAST_SLOT_THREAD: IntGauge =
+        register_int_gauge!("last_slot_thread", "thread of the slot of the last operation saved in database").unwrap();
+}
+
+pub fn set_last_slot_period(period: u64) {
+    LAST_SLOT_PERIOD.set(period as i64);
+}
+
+pub fn set_last_slot_thread(thread: u8) {
+    LAST_SLOT_THREAD.set(thread as i64);
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -31,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         default_panic(info);
         std::process::exit(1);
     }));
+
     tokio::spawn(async move {
         let config = HttpConfig {
             client_config: ClientConfig {
@@ -188,12 +207,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     (format!("{}_{}", slot.period, slot.thread),),
                 )
                 .unwrap();
+
+                set_last_slot_period(slot.period);
+                set_last_slot_thread(slot.thread);        
             }
             // Save DB
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     });
-
+    
     let addr = std::env::var("INDEXER_API")
         .unwrap()
         .parse::<SocketAddr>()
@@ -335,6 +357,22 @@ async fn indexer_api(
                 serde_json::to_string(&res).unwrap(),
             ))))
         },
+        "/metrics" => {
+            let encoder = TextEncoder::new();
+            let mut buffer = vec![];
+            encoder
+                .encode(&prometheus::gather(), &mut buffer)
+                .expect("Failed to encode metrics");
+            println!("Metrics called: {:?}", buffer.len());
+            dbg!(buffer.clone());
+            let response = Response::builder()
+                .status(200)
+                .header(CONTENT_TYPE, encoder.format_type())
+                .body(Full::new(Bytes::from(buffer)))
+                .unwrap();
+    
+            Ok(response)
+        }
         _ => {
             return Response::builder()
                 .status(404)
