@@ -116,6 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .unwrap();
 
+        let save_only_success = bool::from_str(&std::env::var("SAVE_ONLY_SUCCESS_TRANSFERS").unwrap_or("false".to_string())).unwrap();
         let mut last_saved_slot = match conn
             .query_first::<String, _>(
                 "SELECT value_text FROM metadata WHERE key_text = 'last_slot'",
@@ -178,6 +179,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 )
                 .unwrap();
                 for transfer in currents.iter() {
+                    if save_only_success && !transfer.succeed {
+                        continue;
+                    }
                     match transfer.context {
                         TransferContext::Operation(operation_id) => {
                             conn.exec_drop(
