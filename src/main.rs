@@ -244,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // `hyper::rt` IO traits.
         let io = TokioIo::new(stream);
         let pool = pool.clone();
-        let make_svc = service_fn(move |req| transfers(req, pool.clone()));
+        let make_svc = service_fn(move |req| indexer_api(req, pool.clone()));
 
         // Spawn a tokio task to serve multiple connections concurrently
         tokio::task::spawn(async move {
