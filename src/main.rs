@@ -6,6 +6,7 @@ use std::time::Duration;
 use dotenv::dotenv;
 use http_body_util::Full;
 use hyper::body::Bytes;
+use hyper::header::CONTENT_TYPE;
 use hyper::Request;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
@@ -22,6 +23,23 @@ use mysql::Pool;
 use serde::{Deserialize, Serialize};
 use time::{format_description, PrimitiveDateTime};
 use tokio::net::TcpListener;
+use prometheus::{register_int_gauge, Encoder, IntGauge, TextEncoder};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref LAST_SLOT_PERIOD: IntGauge =
+        register_int_gauge!("last_slot_period", "period of the slot of the last operation saved in database").unwrap();
+    static ref LAST_SLOT_THREAD: IntGauge =
+        register_int_gauge!("last_slot_thread", "thread of the slot of the last operation saved in database").unwrap();
+}
+
+pub fn set_last_slot_period(period: u64) {
+    LAST_SLOT_PERIOD.set(period as i64);
+}
+
+pub fn set_last_slot_thread(thread: u8) {
+    LAST_SLOT_THREAD.set(thread as i64);
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -35,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let url = std::env::var("DATABASE_URL").unwrap();
     let pool = Pool::new(url.as_str()).unwrap();
     let mut conn = pool.get_conn().unwrap();
+
     tokio::spawn(async move {
         let config = HttpConfig {
             client_config: ClientConfig {
@@ -200,12 +219,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     (format!("{}_{}", slot.period, slot.thread),),
                 )
                 .unwrap();
+
+                set_last_slot_period(slot.period);
+                set_last_slot_thread(slot.thread);        
             }
             // Save DB
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     });
-
+    
     let addr = std::env::var("INDEXER_API")
         .unwrap()
         .parse::<SocketAddr>()
@@ -238,92 +260,135 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-async fn transfers(
+async fn indexer_api(
     req: Request<hyper::body::Incoming>,
     pool: Pool,
 ) -> Result<Response<Full<Bytes>>, hyper::http::Error> {
     let mut conn = pool.get_conn().unwrap();
-    let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
-        .collect::<HashMap<_, _>>();
 
-    let mut conditions = vec![];
-    match params.get("from") {
-        Some(from) => {
-            let Ok(from_addr) = Address::from_str(from) else {
+    match req.uri().path() {
+        "/transfers" => {
+            let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
+            .collect::<HashMap<_, _>>();
+    
+        let mut conditions = vec![];
+        match params.get("from") {
+            Some(from) => {
+                let Ok(from_addr) = Address::from_str(from) else {
+                    return Response::builder()
+                        .status(400)
+                        .body(Full::new(Bytes::from("Invalid from address")));
+                };
+                conditions.push(format!("from_addr = '{}' ", from_addr));
+            }
+            None => {}
+        }
+    
+        match params.get("to") {
+            Some(to) => {
+                let Ok(to_addr) = Address::from_str(to) else {
+                    return Response::builder()
+                        .status(400)
+                        .body(Full::new(Bytes::from("Invalid to address")));
+                };
+                conditions.push(format!("to_addr = '{}' ", to_addr));
+            }
+            None => {}
+        }
+        match params.get("operation_id") {
+            Some(operation_id) => {
+                conditions.push(format!("operation_id = '{}' ", operation_id));
+            }
+            None => {}
+        }
+        match params.get("succeed") {
+            Some(succeed) => {
+                conditions.push(format!("succeed = '{}' ", succeed));
+            }
+            None => {}
+        }
+        match params.get("start_date") {
+            Some(start_date) => {
+                conditions.push(format!(
+                    "slot_timestamp >= '{}' ",
+                    start_date.trim_end_matches('Z')
+                ));
+            }
+            None => {}
+        }
+        match params.get("end_date") {
+            Some(end_date) => {
+                conditions.push(format!(
+                    "slot_timestamp <= '{}' ",
+                    end_date.trim_end_matches('Z')
+                ));
+            }
+            None => {}
+        }
+        if conditions.is_empty() {
+            conditions.push("1 = 1".to_string());
+        }
+        let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, String, PrimitiveDateTime ), _, _>(
+            format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
+            (),
+        ) else {
+            return Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::from("Internal error")));
+        };
+        let mut transfers = Vec::new();
+        for transfer in res {
+            transfers.push(TransferResponse {
+                from: Address::from_str(&transfer.0).unwrap(),
+                to: Address::from_str(&transfer.1).unwrap(),
+                block_id: BlockId::from_str(&transfer.2).unwrap(),
+                fee: Amount::from_raw(transfer.3),
+                succeed: transfer.4,
+                amount: Amount::from_raw(transfer.5),
+                context: serde_json::from_str(&transfer.6).unwrap(),
+                operation_time: transfer
+                    .7
+                    .format(&format_description::well_known::Iso8601::DATE_TIME)
+                    .unwrap(),
+            });
+        }
+        Ok(Response::new(Full::new(Bytes::from(
+            serde_json::to_string(&transfers).unwrap(),
+        ))))
+        },
+        "/last_slot" => {
+            let Ok(res) = conn.exec::<String,_,_>(
+                format!("SELECT value_text FROM metadata WHERE key_text='last_slot'"),
+                (),
+            ) else {
                 return Response::builder()
-                    .status(400)
-                    .body(Full::new(Bytes::from("Invalid from address")));
+                    .status(500)
+                    .body(Full::new(Bytes::from("Internal error")));
             };
-            conditions.push(format!("from_addr = '{}' ", from_addr));
+            return Ok(Response::new(Full::new(Bytes::from(
+                serde_json::to_string(&res).unwrap(),
+            ))))
+        },
+        "/metrics" => {
+            let encoder = TextEncoder::new();
+            let mut buffer = vec![];
+            encoder
+                .encode(&prometheus::gather(), &mut buffer)
+                .expect("Failed to encode metrics");
+            let response = Response::builder()
+                .status(200)
+                .header(CONTENT_TYPE, encoder.format_type())
+                .body(Full::new(Bytes::from(buffer)))
+                .unwrap();
+    
+            Ok(response)
         }
-        None => {}
-    }
-
-    match params.get("to") {
-        Some(to) => {
-            let Ok(to_addr) = Address::from_str(to) else {
-                return Response::builder()
-                    .status(400)
-                    .body(Full::new(Bytes::from("Invalid to address")));
-            };
-            conditions.push(format!("to_addr = '{}' ", to_addr));
+        _ => {
+            return Response::builder()
+                .status(404)
+                .body(Full::new(Bytes::from("Not found")));
         }
-        None => {}
     }
-    match params.get("operation_id") {
-        Some(operation_id) => {
-            conditions.push(format!("operation_id = '{}' ", operation_id));
-        }
-        None => {}
-    }
-    match params.get("start_date") {
-        Some(start_date) => {
-            conditions.push(format!(
-                "slot_timestamp >= '{}' ",
-                start_date.trim_end_matches('Z')
-            ));
-        }
-        None => {}
-    }
-    match params.get("end_date") {
-        Some(end_date) => {
-            conditions.push(format!(
-                "slot_timestamp <= '{}' ",
-                end_date.trim_end_matches('Z')
-            ));
-        }
-        None => {}
-    }
-    if conditions.is_empty() {
-        conditions.push("1 = 1".to_string());
-    }
-    let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, String, PrimitiveDateTime ), _, _>(
-        format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
-        (),
-    ) else {
-        return Response::builder()
-            .status(500)
-            .body(Full::new(Bytes::from("Internal error")));
-    };
-    let mut transfers = Vec::new();
-    for transfer in res {
-        transfers.push(TransferResponse {
-            from: Address::from_str(&transfer.0).unwrap(),
-            to: Address::from_str(&transfer.1).unwrap(),
-            block_id: BlockId::from_str(&transfer.2).unwrap(),
-            fee: Amount::from_raw(transfer.3),
-            succeed: transfer.4,
-            amount: Amount::from_raw(transfer.5),
-            context: serde_json::from_str(&transfer.6).unwrap(),
-            operation_time: transfer
-                .7
-                .format(&format_description::well_known::Iso8601::DATE_TIME)
-                .unwrap(),
-        });
-    }
-    Ok(Response::new(Full::new(Bytes::from(
-        serde_json::to_string(&transfers).unwrap(),
-    ))))
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
