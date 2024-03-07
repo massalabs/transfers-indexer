@@ -63,6 +63,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await
         .unwrap();
 
+        let _ = conn.query_drop(
+            "CREATE INDEX idx_slot_timestamp ON transfers(slot_timestamp);
+            CREATE INDEX idx_from_addr ON transfers(from_addr);
+            CREATE INDEX idx_to_addr ON transfers(to_addr);
+            CREATE INDEX idx_block_id ON transfers(block_id);
+            CREATE INDEX idx_operation_id ON transfers(operation_id);"
+        );
+
         conn.query_drop(
             "CREATE TABLE IF NOT EXISTS transfers (
             id INT PRIMARY KEY NOT NULL AUTO_INCREMENT,
