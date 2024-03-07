@@ -363,8 +363,6 @@ async fn indexer_api(
             encoder
                 .encode(&prometheus::gather(), &mut buffer)
                 .expect("Failed to encode metrics");
-            println!("Metrics called: {:?}", buffer.len());
-            dbg!(buffer.clone());
             let response = Response::builder()
                 .status(200)
                 .header(CONTENT_TYPE, encoder.format_type())
