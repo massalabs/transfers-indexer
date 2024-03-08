@@ -311,7 +311,7 @@ async fn indexer_api(
         }
         match params.get("succeed") {
             Some(succeed) => {
-                conditions.push(format!("succeed = '{}' ", succeed));
+                conditions.push(format!("succeed = {} ", succeed));
             }
             None => {}
         }
