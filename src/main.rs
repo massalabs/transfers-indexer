@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             from_addr varchar(100) not null,
             to_addr varchar(100) not null,
             amount bigint not null,
+            effective_amount_received bigint not null,
             block_id varchar(100) not null,
             fee bigint not null,
             succeed int not null,
@@ -183,13 +184,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     match transfer.context {
                         TransferContext::Operation(operation_id) => {
                             conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, block_id, fee, succeed, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, effective_amount_received, block_id, fee, succeed, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     format!("{}_{}", slot.period, slot.thread),
                                     slot_timestamp.format_instant().trim_end_matches('Z'),
                                     transfer.from.to_string(),
                                     transfer.to.to_string(),
                                     transfer.amount.to_raw(),
+                                    transfer.effective_amount_received.to_raw(),
                                     transfer.block_id.to_string(),
                                     transfer.fee.to_raw(),
                                     transfer.succeed,
@@ -200,7 +202,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                         TransferContext::ASC(_index) => {
                             conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     format!("{}_{}", slot.period, slot.thread),
                                     slot_timestamp.format_instant().trim_end_matches('Z'),
@@ -210,6 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     transfer.fee.to_raw(),
                                     transfer.succeed,
                                     transfer.amount.to_raw(),
+                                    transfer.effective_amount_received.to_raw(),
                                     serde_json::to_string(&transfer.context).unwrap()
                                 )
                             ).unwrap();
@@ -336,8 +339,8 @@ async fn indexer_api(
         if conditions.is_empty() {
             conditions.push("1 = 1".to_string());
         }
-        let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, String, PrimitiveDateTime ), _, _>(
-            format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
+        let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, u64, String, PrimitiveDateTime ), _, _>(
+            format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
             (),
         ) else {
             return Response::builder()
@@ -352,9 +355,10 @@ async fn indexer_api(
                 fee: Amount::from_raw(transfer.3),
                 succeed: transfer.4,
                 amount: Amount::from_raw(transfer.5),
-                context: serde_json::from_str(&transfer.6).unwrap(),
+                effective_amount_received: Amount::from_raw(transfer.6),
+                context: serde_json::from_str(&transfer.7).unwrap(),
                 operation_time: transfer
-                    .7
+                    .8
                     .format(&format_description::well_known::Iso8601::DATE_TIME)
                     .unwrap(),
             }
@@ -406,6 +410,8 @@ pub struct TransferResponse {
     pub to: Address,
     /// The amount of the transfer
     pub amount: Amount,
+    /// Effective amount received
+    pub effective_amount_received: Amount,
     /// If the transfer succeed or not
     pub succeed: bool,
     /// Fee
