@@ -177,48 +177,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     *slot,
                 )
                 .unwrap();
-                for transfer in currents.iter() {
-                    if save_only_success && !transfer.succeed {
-                        continue;
-                    }
-                    match transfer.context {
-                        TransferContext::Operation(operation_id) => {
-                            conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, amount, effective_amount_received, block_id, fee, succeed, context, operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                (
-                                    format!("{}_{}", slot.period, slot.thread),
-                                    slot_timestamp.format_instant().trim_end_matches('Z'),
-                                    transfer.from.to_string(),
-                                    transfer.to.to_string(),
-                                    transfer.amount.to_raw(),
-                                    transfer.effective_amount_received.to_raw(),
-                                    transfer.block_id.to_string(),
-                                    transfer.fee.to_raw(),
-                                    transfer.succeed,
-                                    serde_json::to_string(&transfer.context).unwrap(),
-                                    operation_id.to_string(),
-                                )
-                            ).unwrap();
+
+                const MAX_INSERTS: usize = 1000;
+
+                currents.par_chunks(MAX_INSERTS).for_each(|chunk| {
+                    let mut output: Vec<String> = Vec::with_capacity(chunk.len());
+
+                    output.par_iter_mut().enumerate().for_each(|(i, output)| {
+                        let transfer = &chunk[i];
+
+                        if save_only_success && !transfer.succeed {
+                            return;
                         }
-                        TransferContext::ASC(_index) => {
-                            conn.exec_drop(
-                                "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                (
-                                    format!("{}_{}", slot.period, slot.thread),
-                                    slot_timestamp.format_instant().trim_end_matches('Z'),
-                                    transfer.from.to_string(),
-                                    transfer.to.to_string(),
-                                    transfer.block_id.to_string(),
-                                    transfer.fee.to_raw(),
-                                    transfer.succeed,
-                                    transfer.amount.to_raw(),
-                                    transfer.effective_amount_received.to_raw(),
-                                    serde_json::to_string(&transfer.context).unwrap()
-                                )
-                            ).unwrap();
-                        }
-                    }
-                }
+                        match transfer.context {
+                            TransferContext::Operation(operation_id) => {
+                                *output = format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                                        format!("{}_{}", slot.period, slot.thread),
+                                        slot_timestamp.format_instant().trim_end_matches('Z'),
+                                        transfer.from.to_string(),
+                                        transfer.to.to_string(),
+                                        transfer.amount.to_raw(),
+                                        transfer.effective_amount_received.to_raw(),
+                                        transfer.block_id.to_string(),
+                                        transfer.fee.to_raw(),
+                                        transfer.succeed,
+                                        serde_json::to_string(&transfer.context).unwrap(),
+                                        operation_id.to_string(),
+                                    );
+                            }
+                            TransferContext::ASC(_index) => {
+                                *output = format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                                        format!("{}_{}", slot.period, slot.thread),
+                                        slot_timestamp.format_instant().trim_end_matches('Z'),
+                                        transfer.from.to_string(),
+                                        transfer.to.to_string(),
+                                        transfer.block_id.to_string(),
+                                        transfer.fee.to_raw(),
+                                        transfer.succeed,
+                                        transfer.amount.to_raw(),
+                                        transfer.effective_amount_received.to_raw(),
+                                        serde_json::to_string(&transfer.context).unwrap()
+                                );
+                            }
+                        }               
+                    });
+
+                    // INSERT CHUNK INTO DB
+                    let stmt = format!(
+                        "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, operation_id) VALUES {};",
+                        output.join(",")
+                    );
+                    conn.exec_drop(stmt, ()).unwrap();
+
+
+                });
+                
                 last_saved_slot = *slot;
                 conn.exec_drop(
                     "UPDATE metadata SET value_text = ? WHERE key_text = 'last_slot'",
