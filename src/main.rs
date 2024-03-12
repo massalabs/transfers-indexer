@@ -187,22 +187,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                         match transfer.context {
                             TransferContext::Operation(operation_id) => {
-                                Some(format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                                Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','{}')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
                                         transfer.from.to_string(),
                                         transfer.to.to_string(),
-                                        transfer.amount.to_raw(),
-                                        transfer.effective_amount_received.to_raw(),
                                         transfer.block_id.to_string(),
                                         transfer.fee.to_raw(),
                                         transfer.succeed,
+                                        transfer.amount.to_raw(),
+                                        transfer.effective_amount_received.to_raw(),
                                         serde_json::to_string(&transfer.context).unwrap(),
                                         operation_id.to_string(),
                                     ))
                             }
                             TransferContext::ASC(_index) => {
-                                Some(format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, '')",
+                                Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
                                         transfer.from.to_string(),
@@ -217,8 +217,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             }
                         }               
                     }).collect();
-
-                    // INSERT CHUNK INTO DB
                    format!(
                         "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, operation_id) VALUES {};",
                         values.join(",")
@@ -226,7 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }).collect();
                 
                 for value in values_2 {
-                    println!(value);
+                    println!("{}", value);
                     conn.exec_drop(value, ()).unwrap();
                 }
 
