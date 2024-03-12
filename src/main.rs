@@ -180,18 +180,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                 const MAX_INSERTS: usize = 1000;
 
-                currents.par_chunks(MAX_INSERTS).for_each(|chunk| {
-                    let mut output: Vec<String> = Vec::with_capacity(chunk.len());
-
-                    output.par_iter_mut().enumerate().for_each(|(i, output)| {
-                        let transfer = &chunk[i];
-
+                let values_2: Vec<String> = currents.par_chunks(MAX_INSERTS).map(|chunk| {
+                    let values: Vec<String> = chunk.into_par_iter().filter_map(|transfer| {
                         if save_only_success && !transfer.succeed {
-                            return;
+                            return None;
                         }
                         match transfer.context {
                             TransferContext::Operation(operation_id) => {
-                                *output = format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                                Some(format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
                                         transfer.from.to_string(),
@@ -203,10 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         transfer.succeed,
                                         serde_json::to_string(&transfer.context).unwrap(),
                                         operation_id.to_string(),
-                                    );
+                                    ))
                             }
                             TransferContext::ASC(_index) => {
-                                *output = format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                                Some(format!("({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, '')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
                                         transfer.from.to_string(),
@@ -217,21 +213,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         transfer.amount.to_raw(),
                                         transfer.effective_amount_received.to_raw(),
                                         serde_json::to_string(&transfer.context).unwrap()
-                                );
+                                ))
                             }
                         }               
-                    });
+                    }).collect();
 
                     // INSERT CHUNK INTO DB
-                    let stmt = format!(
+                   format!(
                         "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, operation_id) VALUES {};",
-                        output.join(",")
-                    );
-                    conn.exec_drop(stmt, ()).unwrap();
-
-
-                });
+                        values.join(",")
+                    )
+                }).collect();
                 
+                for value in values_2 {
+                    conn.exec_drop(value, ()).unwrap();
+                }
+
+
                 last_saved_slot = *slot;
                 conn.exec_drop(
                     "UPDATE metadata SET value_text = ? WHERE key_text = 'last_slot'",
