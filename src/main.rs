@@ -224,7 +224,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }).collect();
                 
                 for value in values_2 {
-                    println!("{}", value);
                     conn.exec_drop(value, ()).unwrap();
                 }
 
