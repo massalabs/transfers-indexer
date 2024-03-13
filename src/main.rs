@@ -10,6 +10,7 @@ use hyper::header::CONTENT_TYPE;
 use hyper::Request;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
+use lazy_static::lazy_static;
 use massa_api_exports::execution::TransferContext;
 use massa_models::address::Address;
 use massa_models::amount::Amount;
@@ -20,18 +21,23 @@ use massa_sdk::{Client, ClientConfig, HttpConfig};
 use massa_time::MassaTime;
 use mysql::prelude::Queryable;
 use mysql::Pool;
+use prometheus::{register_int_gauge, Encoder, IntGauge, TextEncoder};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use time::{format_description, PrimitiveDateTime};
 use tokio::net::TcpListener;
-use prometheus::{register_int_gauge, Encoder, IntGauge, TextEncoder};
-use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref LAST_SLOT_PERIOD: IntGauge =
-        register_int_gauge!("last_slot_period", "period of the slot of the last operation saved in database").unwrap();
-    static ref LAST_SLOT_THREAD: IntGauge =
-        register_int_gauge!("last_slot_thread", "thread of the slot of the last operation saved in database").unwrap();
+    static ref LAST_SLOT_PERIOD: IntGauge = register_int_gauge!(
+        "last_slot_period",
+        "period of the slot of the last operation saved in database"
+    )
+    .unwrap();
+    static ref LAST_SLOT_THREAD: IntGauge = register_int_gauge!(
+        "last_slot_thread",
+        "thread of the slot of the last operation saved in database"
+    )
+    .unwrap();
 }
 
 pub fn set_last_slot_period(period: u64) {
@@ -113,9 +119,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             CREATE INDEX idx_from_addr ON transfers(from_addr);
             CREATE INDEX idx_to_addr ON transfers(to_addr);
             CREATE INDEX idx_block_id ON transfers(block_id);
-            CREATE INDEX idx_operation_id ON transfers(operation_id);"
+            CREATE INDEX idx_operation_id ON transfers(operation_id);",
         );
-        let save_only_success = bool::from_str(&std::env::var("SAVE_ONLY_SUCCESS_TRANSFERS").unwrap_or("false".to_string())).unwrap();
+        let save_only_success = bool::from_str(
+            &std::env::var("SAVE_ONLY_SUCCESS_TRANSFERS").unwrap_or("false".to_string()),
+        )
+        .unwrap();
         let mut last_saved_slot = match conn
             .query_first::<String, _>(
                 "SELECT value_text FROM metadata WHERE key_text = 'last_slot'",
@@ -158,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .await
                 .unwrap();
             if slots_transfers.is_empty() && !slots.is_empty() {
-                last_saved_slot = slots.last().unwrap().clone();
+                last_saved_slot = *slots.last().unwrap();
                 conn.exec_drop(
                     "UPDATE metadata SET value_text = ? WHERE key_text = 'last_slot'",
                     (format!(
@@ -180,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                 const MAX_INSERTS: usize = 1000;
 
-                let values_2: Vec<String> = currents.par_chunks(MAX_INSERTS).map(|chunk| {
+                let values_2: Vec<String> = currents.par_chunks(MAX_INSERTS).filter_map(|chunk| {
                     let values: Vec<String> = chunk.into_par_iter().filter_map(|transfer| {
                         if save_only_success && !transfer.succeed {
                             return None;
@@ -190,24 +199,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','{}')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
-                                        transfer.from.to_string(),
-                                        transfer.to.to_string(),
-                                        transfer.block_id.to_string(),
+                                        transfer.from,
+                                        transfer.to,
+                                        transfer.block_id,
                                         transfer.fee.to_raw(),
                                         transfer.succeed,
                                         transfer.amount.to_raw(),
                                         transfer.effective_amount_received.to_raw(),
                                         serde_json::to_string(&transfer.context).unwrap(),
-                                        operation_id.to_string(),
+                                        operation_id,
                                     ))
                             }
                             TransferContext::ASC(_index) => {
                                 Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
-                                        transfer.from.to_string(),
-                                        transfer.to.to_string(),
-                                        transfer.block_id.to_string(),
+                                        transfer.from,
+                                        transfer.to,
+                                        transfer.block_id,
                                         transfer.fee.to_raw(),
                                         transfer.succeed,
                                         transfer.amount.to_raw(),
@@ -215,14 +224,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         serde_json::to_string(&transfer.context).unwrap()
                                 ))
                             }
-                        }               
+                        }
                     }).collect();
-                   format!(
-                        "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, operation_id) VALUES {};",
-                        values.join(",")
-                    )
+                    if values.is_empty() {
+                        None
+                    } else {
+                        Some(format!(
+                            "INSERT INTO transfers (slot, slot_timestamp, from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, operation_id) VALUES {};",
+                            values.join(",")
+                        ))
+                    }
                 }).collect();
-                
+
                 for value in values_2 {
                     conn.exec_drop(value, ()).unwrap();
                 }
@@ -235,13 +248,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .unwrap();
 
                 set_last_slot_period(slot.period);
-                set_last_slot_thread(slot.thread);        
+                set_last_slot_thread(slot.thread);
             }
             // Save DB
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     });
-    
+
     let addr = std::env::var("INDEXER_API")
         .unwrap()
         .parse::<SocketAddr>()
@@ -288,66 +301,66 @@ async fn indexer_api(
                     .body(Full::new(Bytes::from("Method not allowed")));
             }
             let params = form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes())
-            .collect::<HashMap<_, _>>();
-    
-        let mut conditions = vec![];
-        match params.get("from") {
-            Some(from) => {
-                let Ok(from_addr) = Address::from_str(from) else {
-                    return Response::builder()
-                        .status(400)
-                        .body(Full::new(Bytes::from("Invalid from address")));
-                };
-                conditions.push(format!("from_addr = '{}' ", from_addr));
+                .collect::<HashMap<_, _>>();
+
+            let mut conditions = vec![];
+            match params.get("from") {
+                Some(from) => {
+                    let Ok(from_addr) = Address::from_str(from) else {
+                        return Response::builder()
+                            .status(400)
+                            .body(Full::new(Bytes::from("Invalid from address")));
+                    };
+                    conditions.push(format!("from_addr = '{}' ", from_addr));
+                }
+                None => {}
             }
-            None => {}
-        }
-    
-        match params.get("to") {
-            Some(to) => {
-                let Ok(to_addr) = Address::from_str(to) else {
-                    return Response::builder()
-                        .status(400)
-                        .body(Full::new(Bytes::from("Invalid to address")));
-                };
-                conditions.push(format!("to_addr = '{}' ", to_addr));
+
+            match params.get("to") {
+                Some(to) => {
+                    let Ok(to_addr) = Address::from_str(to) else {
+                        return Response::builder()
+                            .status(400)
+                            .body(Full::new(Bytes::from("Invalid to address")));
+                    };
+                    conditions.push(format!("to_addr = '{}' ", to_addr));
+                }
+                None => {}
             }
-            None => {}
-        }
-        match params.get("operation_id") {
-            Some(operation_id) => {
-                conditions.push(format!("operation_id = '{}' ", operation_id));
+            match params.get("operation_id") {
+                Some(operation_id) => {
+                    conditions.push(format!("operation_id = '{}' ", operation_id));
+                }
+                None => {}
             }
-            None => {}
-        }
-        match params.get("succeed") {
-            Some(succeed) => {
-                conditions.push(format!("succeed = {} ", succeed));
+            match params.get("succeed") {
+                Some(succeed) => {
+                    conditions.push(format!("succeed = {} ", succeed));
+                }
+                None => {}
             }
-            None => {}
-        }
-        match params.get("start_date") {
-            Some(start_date) => {
-                conditions.push(format!(
-                    "slot_timestamp >= '{}' ",
-                    start_date.trim_end_matches('Z')
-                ));
+            match params.get("start_date") {
+                Some(start_date) => {
+                    conditions.push(format!(
+                        "slot_timestamp >= '{}' ",
+                        start_date.trim_end_matches('Z')
+                    ));
+                }
+                None => {}
             }
-            None => {}
-        }
-        match params.get("end_date") {
-            Some(end_date) => {
-                conditions.push(format!(
-                    "slot_timestamp <= '{}' ",
-                    end_date.trim_end_matches('Z')
-                ));
+            match params.get("end_date") {
+                Some(end_date) => {
+                    conditions.push(format!(
+                        "slot_timestamp <= '{}' ",
+                        end_date.trim_end_matches('Z')
+                    ));
+                }
+                None => {}
             }
-            None => {}
-        }
-        if conditions.is_empty() {
-            conditions.push("1 = 1".to_string());
-        }
-        let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, u64, String, PrimitiveDateTime ), _, _>(
+            if conditions.is_empty() {
+                conditions.push("1 = 1".to_string());
+            }
+            let Ok(res) = conn.exec::<(String, String, String, u64, bool, u64, u64, String, PrimitiveDateTime ), _, _>(
             format!("SELECT from_addr, to_addr, block_id, fee, succeed, amount, effective_amount_received, context, slot_timestamp FROM transfers WHERE {}", conditions.join(" AND ")),
             (),
         ) else {
@@ -355,39 +368,40 @@ async fn indexer_api(
                 .status(500)
                 .body(Full::new(Bytes::from("Internal error")));
         };
-        let transfers = res.into_par_iter().map(|transfer| {
-            TransferResponse {
-                from: Address::from_str(&transfer.0).unwrap(),
-                to: Address::from_str(&transfer.1).unwrap(),
-                block_id: BlockId::from_str(&transfer.2).unwrap(),
-                fee: Amount::from_raw(transfer.3),
-                succeed: transfer.4,
-                amount: Amount::from_raw(transfer.5),
-                effective_amount_received: Amount::from_raw(transfer.6),
-                context: serde_json::from_str(&transfer.7).unwrap(),
-                operation_time: transfer
-                    .8
-                    .format(&format_description::well_known::Iso8601::DATE_TIME)
-                    .unwrap(),
-            }
-        }).collect::<Vec<TransferResponse>>();
-        Ok(Response::new(Full::new(Bytes::from(
-            serde_json::to_string(&transfers).unwrap(),
-        ))))
-        },
+            let transfers = res
+                .into_par_iter()
+                .map(|transfer| TransferResponse {
+                    from: Address::from_str(&transfer.0).unwrap(),
+                    to: Address::from_str(&transfer.1).unwrap(),
+                    block_id: BlockId::from_str(&transfer.2).unwrap(),
+                    fee: Amount::from_raw(transfer.3),
+                    succeed: transfer.4,
+                    amount: Amount::from_raw(transfer.5),
+                    effective_amount_received: Amount::from_raw(transfer.6),
+                    context: serde_json::from_str(&transfer.7).unwrap(),
+                    operation_time: transfer
+                        .8
+                        .format(&format_description::well_known::Iso8601::DATE_TIME)
+                        .unwrap(),
+                })
+                .collect::<Vec<TransferResponse>>();
+            Ok(Response::new(Full::new(Bytes::from(
+                serde_json::to_string(&transfers).unwrap(),
+            ))))
+        }
         "/last_slot" => {
-            let Ok(res) = conn.exec::<String,_,_>(
-                format!("SELECT value_text FROM metadata WHERE key_text='last_slot'"),
+            let Ok(res) = conn.exec::<String, _, _>(
+                "SELECT value_text FROM metadata WHERE key_text='last_slot'".to_string(),
                 (),
             ) else {
                 return Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal error")));
             };
-            return Ok(Response::new(Full::new(Bytes::from(
+            Ok(Response::new(Full::new(Bytes::from(
                 serde_json::to_string(&res).unwrap(),
             ))))
-        },
+        }
         "/metrics" => {
             let encoder = TextEncoder::new();
             let mut buffer = vec![];
@@ -399,13 +413,13 @@ async fn indexer_api(
                 .header(CONTENT_TYPE, encoder.format_type())
                 .body(Full::new(Bytes::from(buffer)))
                 .unwrap();
-    
+
             Ok(response)
         }
         _ => {
-            return Response::builder()
+            Response::builder()
                 .status(404)
-                .body(Full::new(Bytes::from("Not found")));
+                .body(Full::new(Bytes::from("Not found")))
         }
     }
 }
