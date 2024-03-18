@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             client_config: ClientConfig {
                 max_concurrent_requests: 10,
                 max_request_body_size: 1000000,
-                request_timeout: MassaTime::from_millis(1000),
+                request_timeout: MassaTime::from_millis(u64::from_str(&std::env::var("NODE_API_TIMEOUT").unwrap()).unwrap()),
                 certificate_store: "Native".to_string(),
                 id_kind: "Number".to_string(),
                 max_log_length: 1000000,
