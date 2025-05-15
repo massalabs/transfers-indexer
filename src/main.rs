@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if save_only_success && !transfer.succeed {
                             return None;
                         }
-                        match transfer.context {
+                        match &transfer.context {
                             TransferContext::Operation(operation_id) => {
                                 Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','{}')",
                                         format!("{}_{}", slot.period, slot.thread),
@@ -211,6 +211,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     ))
                             }
                             TransferContext::ASC(_index) => {
+                                Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','')",
+                                        format!("{}_{}", slot.period, slot.thread),
+                                        slot_timestamp.format_instant().trim_end_matches('Z'),
+                                        transfer.from,
+                                        transfer.to,
+                                        transfer.block_id,
+                                        transfer.fee.to_raw(),
+                                        transfer.succeed,
+                                        transfer.amount.to_raw(),
+                                        transfer.effective_amount_received.to_raw(),
+                                        serde_json::to_string(&transfer.context).unwrap()
+                                ))
+                            }
+                            TransferContext::DeferredCall(_call_id) => {
                                 Some(format!("('{}','{}','{}','{}','{}',{},{},{},{},'{}','')",
                                         format!("{}_{}", slot.period, slot.thread),
                                         slot_timestamp.format_instant().trim_end_matches('Z'),
