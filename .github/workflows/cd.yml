@@ -93,8 +93,8 @@ jobs:
         with:
           name: transfers-indexer_artifacts_${{ matrix.name }}
           path: |
-            transfers_indexer_*.zip
-            transfers_indexer_*.tar.gz
+            transfers-indexer_*.zip
+            transfers-indexer_*.tar.gz
           if-no-files-found: error
       - name: Publish ${{ matrix.os }}_${{ matrix.platform }} artifacts
         uses: softprops/action-gh-release@v1
