@@ -1,0 +1,104 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - TEST.*
+      - DEVN.*
+      - MAIN.*
+      - SECU.*
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macOS-latest, windows-latest]
+        platform: [x86_64, arm64]
+        include:
+          - os: ubuntu-22.04
+            platform: x86_64
+            target: x86_64-unknown-linux-gnu
+            name: release_linux.tar.gz
+          - os: ubuntu-22.04
+            platform: arm64
+            target: aarch64-unknown-linux-gnu
+            name: release_linux_arm64.tar.gz
+          - os: windows-latest
+            platform: x86_64
+            target: x86_64-pc-windows-gnu
+            name: release_windows.zip
+          - os: macOS-latest
+            platform: x86_64
+            target: x86_64-apple-darwin
+            name: release_macos.tar.gz
+          - os: macOS-latest
+            platform: arm64
+            target: aarch64-apple-darwin
+            name: release_macos_aarch64.tar.gz
+        exclude:
+          - os: windows-latest
+            platform: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: "recursive"
+      - uses: ilammy/setup-nasm@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.81.0
+          target: ${{ matrix.target }}
+          override: true
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rs/cargo@v1
+        if: matrix.platform != 'arm64'
+        with:
+          command: build
+          args: --release
+      - uses: actions-rs/cargo@v1
+        if: matrix.platform == 'arm64'
+        with:
+          use-cross: true
+          command: build
+          args: --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir transfers-indexer && cd transfers-indexer
+          if [[ "${{ matrix.platform }}" == "arm64" ]]
+          then
+            cp -v ../target/${{ matrix.target }}/release/transfers-indexer transfers-indexer
+          else
+            cp -v ../target/release/transfers-indexer transfers-indexer
+          fi
+          cd ..
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]
+          then
+            7z a transfers-indexer_${GITHUB_REF/refs\/tags\//}_${{ matrix.name }} transfers-indexer
+          else
+            tar czvf transfers-indexer_${GITHUB_REF/refs\/tags\//}_${{ matrix.name }} transfers-indexer
+          fi
+          cd -
+      - name: Upload ${{ matrix.os }}_${{ matrix.platform }} artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transfers-indexer_artifacts_${{ matrix.name }}
+          path: |
+            transfers_indexer_*.zip
+            transfers_indexer_*.tar.gz
+          if-no-files-found: error
+      - name: Publish ${{ matrix.os }}_${{ matrix.platform }} artifacts
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            transfers-indexer_*.zip
+            transfers-indexer_*.tar.gz
