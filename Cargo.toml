@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-massa_sdk = { git = "https://github.com/massalabs/massa", branch = "main_2_6", package = "massa_sdk" }
-massa_models = { git = "https://github.com/massalabs/massa", branch = "main_2_6", package = "massa_models" }
-massa_time = { git = "https://github.com/massalabs/massa", branch = "main_2_6", package = "massa_time" }
-massa_api_exports = { git = "https://github.com/massalabs/massa", branch = "main_2_6", package = "massa_api_exports" }
+massa_sdk = { git = "https://github.com/massalabs/massa", "rev" = "a29f1cb588ad48237db232453747dd1aec96abe7", package = "massa_sdk" }
+massa_models = { git = "https://github.com/massalabs/massa", "rev" = "a29f1cb588ad48237db232453747dd1aec96abe7", package = "massa_models" }
+massa_time = { git = "https://github.com/massalabs/massa", "rev" = "a29f1cb588ad48237db232453747dd1aec96abe7", package = "massa_time" }
+massa_api_exports = { git = "https://github.com/massalabs/massa", "rev" = "a29f1cb588ad48237db232453747dd1aec96abe7", package = "massa_api_exports" }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
